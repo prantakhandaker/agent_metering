@@ -262,3 +262,52 @@ async def test_streaming_forwards_chunks_and_logs_usage(client, temp_meter):
     assert resp.status_code == 200
     assert "Hi" in resp.text
     assert temp_meter.cost_by_customer()["cust_stream"]["total_tokens"] == 10
+
+
+@pytest.mark.asyncio
+async def test_proxy_uses_env_attribution_defaults(client, temp_meter, monkeypatch):
+    monkeypatch.setenv("AGENT_METERING_CUSTOMER_ID", "env_customer")
+    monkeypatch.setenv("AGENT_METERING_FEATURE", "env_feature")
+    mock_response = httpx.Response(
+        200,
+        json=OPENAI_SUCCESS,
+        headers={"content-type": "application/json"},
+    )
+    with patch("agent_metering.proxy.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = _mock_request_response(mock_response)
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={"Authorization": "Bearer sk-test"},
+        )
+    assert resp.status_code == 200
+    assert "env_customer" in temp_meter.cost_by_customer()
+    assert "env_feature" in temp_meter.cost_by_feature()
+
+
+@pytest.mark.asyncio
+async def test_proxy_headers_override_env_defaults(client, temp_meter, monkeypatch):
+    monkeypatch.setenv("AGENT_METERING_CUSTOMER_ID", "env_customer")
+    monkeypatch.setenv("AGENT_METERING_FEATURE", "env_feature")
+    mock_response = httpx.Response(
+        200,
+        json=OPENAI_SUCCESS,
+        headers={"content-type": "application/json"},
+    )
+    with patch("agent_metering.proxy.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = _mock_request_response(mock_response)
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={
+                "Authorization": "Bearer sk-test",
+                "X-Customer-Id": "header_customer",
+                "X-Feature": "header_feature",
+            },
+        )
+    assert resp.status_code == 200
+    by_customer = temp_meter.cost_by_customer()
+    assert "header_customer" in by_customer
+    assert "env_customer" not in by_customer
+    assert "header_feature" in temp_meter.cost_by_feature()
+    assert "env_feature" not in temp_meter.cost_by_feature()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, AsyncIterator, Optional
 
 import httpx
@@ -33,6 +34,17 @@ METERING_HEADERS = frozenset(
         "transfer-encoding",
     )
 )
+
+# Proxy-process env defaults when request headers are absent (zero-code path).
+ENV_CUSTOMER_ID = "AGENT_METERING_CUSTOMER_ID"
+ENV_FEATURE = "AGENT_METERING_FEATURE"
+
+
+def _attribution_defaults() -> tuple[str, str]:
+    return (
+        os.environ.get(ENV_CUSTOMER_ID, "unknown"),
+        os.environ.get(ENV_FEATURE, "unknown"),
+    )
 
 
 def create_app() -> FastAPI:
@@ -131,8 +143,9 @@ async def _handle_proxy_request(
     path: str,
 ) -> Response:
     body = await request.body()
-    customer_id = request.headers.get("X-Customer-Id", "unknown")
-    feature = request.headers.get("X-Feature", "unknown")
+    default_customer, default_feature = _attribution_defaults()
+    customer_id = request.headers.get("X-Customer-Id") or default_customer
+    feature = request.headers.get("X-Feature") or default_feature
     forward_headers = _collect_forward_headers(request, cfg)
     upstream_url = _build_upstream_url(cfg, path)
     request_model = _request_model(body)

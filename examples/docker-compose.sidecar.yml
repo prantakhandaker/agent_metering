@@ -1,0 +1,73 @@
+# Zero-code sidecar: your app image is unchanged; only env vars point at the proxy.
+#
+# Usage:
+#   docker compose -f examples/docker-compose.sidecar.yml up --build
+#
+# Replace the `app` service image/command with your real workload. Official
+# OpenAI/Anthropic SDKs pick up OPENAI_BASE_URL / ANTHROPIC_BASE_URL automatically.
+
+services:
+  metering-proxy:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile.proxy
+    ports:
+      - "8787:8787"
+    environment:
+      AGENT_METERING_CUSTOMER_ID: ${AGENT_METERING_CUSTOMER_ID:-acme_corp}
+      AGENT_METERING_FEATURE: ${AGENT_METERING_FEATURE:-default}
+      # Forward provider keys if the proxy must call upstream (optional; keys
+      # usually come from the app request Authorization headers).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AZURE_OPENAI_BASE_URL: ${AZURE_OPENAI_BASE_URL:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+    volumes:
+      # Persist SQLite usage DB across restarts
+      - metering-data:/data
+    working_dir: /data
+    command:
+      [
+        "uvicorn",
+        "agent_metering.proxy:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8787",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/docs')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Example workload — swap image/command for your own app (no code changes).
+  app:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./proxy_env_only_example.py:/app/proxy_env_only_example.py:ro
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}
+      OPENAI_BASE_URL: http://metering-proxy:8787/proxy/openai/v1
+      ANTHROPIC_BASE_URL: http://metering-proxy:8787/proxy/anthropic
+      AZURE_OPENAI_ENDPOINT: http://metering-proxy:8787/proxy/azure
+      AZURE_OPENAI_BASE_URL: http://metering-proxy:8787/proxy/azure/v1
+    depends_on:
+      metering-proxy:
+        condition: service_healthy
+    command:
+      [
+        "sh",
+        "-c",
+        "pip install -q openai && python proxy_env_only_example.py",
+      ]
+
+volumes:
+  metering-data:

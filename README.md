@@ -31,7 +31,52 @@ pip install -r requirements.txt
 # or: pip install -e ".[dashboard,dev,example]"
 ```
 
-## How customers connect
+## Zero code change
+
+If your app uses the official OpenAI / Anthropic SDKs **without** a hardcoded `base_url`, you can add metering with **no application source changes**.
+
+1. Run the proxy with attribution defaults (customer / feature for all traffic):
+
+```bash
+export AGENT_METERING_CUSTOMER_ID=acme_corp
+export AGENT_METERING_FEATURE=support_bot
+uvicorn agent_metering.proxy:app --port 8787
+```
+
+2. Point SDK base-URL env vars at the proxy (deploy config, shell, or sidecar):
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8787/proxy/openai/v1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787/proxy/anthropic
+# then start your existing app unchanged
+python my_app.py
+```
+
+Or let the CLI inject those env vars and optionally start the proxy:
+
+```bash
+python -m agent_metering run --start-proxy --customer acme_corp --feature support_bot -- python my_app.py
+```
+
+(`agent-metering` works after `pip install` when console scripts are allowed; on some Windows setups the `.exe` shim is blocked — use `python -m agent_metering` instead.)
+
+Docker Compose sidecar (app image unchanged; only env overrides):
+
+```bash
+export OPENAI_API_KEY=sk-...
+docker compose -f examples/docker-compose.sidecar.yml up --build
+```
+
+Env-only example (client constructed with no `base_url`):
+
+```bash
+python -m agent_metering run --start-proxy --customer acme_corp --feature support_bot -- `
+  python examples/proxy_env_only_example.py
+```
+
+Limitation: apps that **hardcode** `base_url` to the real provider bypass env injection. Request headers `X-Customer-Id` / `X-Feature` still override proxy env defaults when present.
+
+## How customers connect (minimal code)
 
 After the proxy is running, point your LLM client at it — change only `base_url` (and optional attribution headers). No other call-site changes.
 
@@ -65,6 +110,17 @@ python -m streamlit run examples/dashboard.py
 | Custom | `http://localhost:8787/proxy/{name}/...` | Defined in `agent_metering/providers.yaml` |
 
 Legacy alias (OpenAI only): `base_url="http://localhost:8787/v1"` still works.
+
+Zero-code env equivalents (set on the **app** process):
+
+| Provider | Env var |
+|----------|---------|
+| OpenAI | `OPENAI_BASE_URL` |
+| Anthropic | `ANTHROPIC_BASE_URL` |
+| Azure | `AZURE_OPENAI_BASE_URL` / `AZURE_OPENAI_ENDPOINT` |
+| Gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_BASE` |
+
+Proxy attribution defaults (set on the **proxy** process): `AGENT_METERING_CUSTOMER_ID`, `AGENT_METERING_FEATURE`.
 
 ### OpenAI example
 
@@ -119,6 +175,7 @@ python examples/demo_no_api_key.py
 ```
 agent_metering/
   proxy.py
+  cli.py
   providers/
     registry.py
     extractors.py
@@ -129,8 +186,11 @@ agent_metering/
   alerts.py
 examples/
   proxy_client_example.py
+  proxy_env_only_example.py
   proxy_anthropic_example.py
   proxy_azure_example.py
+  docker-compose.sidecar.yml
+  Dockerfile.proxy
   dashboard.py
   demo_no_api_key.py
 tests/
