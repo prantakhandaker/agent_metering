@@ -1,0 +1,14 @@
+# Custom LLM providers — loaded at proxy startup.
+# Customer connects: base_url="http://localhost:8787/proxy/my_custom_llm/v1"
+#
+# providers:
+#   my_custom_llm:
+#     base_url: https://llm.mycompany.com
+#     provider_label: my_custom_llm
+#     auth_headers: [Authorization]
+#     model_path: model
+#     input_tokens_path: usage.prompt_tokens
+#     output_tokens_path: usage.completion_tokens
+#     stream_mode: openai_sse
+
+providers: {}
