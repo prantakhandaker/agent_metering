@@ -1,0 +1,23 @@
+{
+  "customer_id": "acme_corp",
+  "feature": "default",
+  "providers": {
+    "openai": {
+      "api_key": "sk-..."
+    },
+    "anthropic": {
+      "api_key": "sk-ant-..."
+    },
+    "gemini": {
+      "api_key": "AIza..."
+    },
+    "azure": {
+      "api_key": "your-azure-key"
+    },
+    "vertex": {
+      "project_id": "my-gcp-project",
+      "location": "us-central1",
+      "credentials_json": "./service-account.json"
+    }
+  }
+}

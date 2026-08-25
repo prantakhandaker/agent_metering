@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -311,3 +312,136 @@ async def test_proxy_headers_override_env_defaults(client, temp_meter, monkeypat
     assert "env_customer" not in by_customer
     assert "header_feature" in temp_meter.cost_by_feature()
     assert "env_feature" not in temp_meter.cost_by_feature()
+
+
+@pytest.mark.asyncio
+async def test_proxy_injects_api_key_from_config(client, temp_meter, tmp_path, monkeypatch):
+    from agent_metering.config import ENV_CONFIG, reset_config
+
+    cfg_path = tmp_path / "agent_metering.config.json"
+    cfg_path.write_text(
+        '{"customer_id":"cfg_cust","feature":"cfg_feat","providers":{"openai":{"api_key":"sk-from-config"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(ENV_CONFIG, str(cfg_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_METERING_CUSTOMER_ID", raising=False)
+    monkeypatch.delenv("AGENT_METERING_FEATURE", raising=False)
+    reset_config()
+
+    captured = {}
+
+    async def capture_request(method, url, content=None, headers=None):
+        captured["headers"] = {k.lower(): v for k, v in dict(headers or {}).items()}
+        return httpx.Response(
+            200,
+            json=OPENAI_SUCCESS,
+            headers={"content-type": "application/json"},
+        )
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.request = AsyncMock(side_effect=capture_request)
+
+    with patch("agent_metering.proxy.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+        )
+    assert resp.status_code == 200
+    assert captured["headers"].get("authorization") == "Bearer sk-from-config"
+    assert "cfg_cust" in temp_meter.cost_by_customer()
+
+
+@pytest.mark.asyncio
+async def test_proxy_client_auth_wins_over_config(client, temp_meter, tmp_path, monkeypatch):
+    from agent_metering.config import ENV_CONFIG, reset_config
+
+    cfg_path = tmp_path / "agent_metering.config.json"
+    cfg_path.write_text(
+        '{"providers":{"openai":{"api_key":"sk-from-config"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(ENV_CONFIG, str(cfg_path))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    reset_config()
+
+    captured = {}
+
+    async def capture_request(method, url, content=None, headers=None):
+        captured["headers"] = {k.lower(): v for k, v in dict(headers or {}).items()}
+        return httpx.Response(
+            200,
+            json=OPENAI_SUCCESS,
+            headers={"content-type": "application/json"},
+        )
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.request = AsyncMock(side_effect=capture_request)
+
+    with patch("agent_metering.proxy.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={"Authorization": "Bearer sk-from-client"},
+        )
+    assert resp.status_code == 200
+    assert captured["headers"].get("authorization") == "Bearer sk-from-client"
+
+
+@pytest.mark.asyncio
+async def test_proxy_injects_vertex_token(client, temp_meter, tmp_path, monkeypatch):
+    from agent_metering.config import ENV_CONFIG, reset_config
+    from agent_metering.providers.registry import reset_registry
+
+    sa = tmp_path / "sa.json"
+    sa.write_text('{"type":"service_account","client_email":"a@b.c"}', encoding="utf-8")
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "vertex": {
+                        "project_id": "proj",
+                        "location": "us-central1",
+                        "credentials_json": str(sa),
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(ENV_CONFIG, str(cfg_path))
+    reset_config()
+    reset_registry()
+
+    captured = {}
+
+    async def capture_request(method, url, content=None, headers=None):
+        captured["url"] = str(url)
+        captured["headers"] = {k.lower(): v for k, v in dict(headers or {}).items()}
+        return httpx.Response(
+            200,
+            json=OPENAI_SUCCESS,
+            headers={"content-type": "application/json"},
+        )
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.request = AsyncMock(side_effect=capture_request)
+
+    with patch(
+        "agent_metering.vertex_auth.get_access_token", return_value="ya29.mock"
+    ):
+        with patch("agent_metering.proxy.httpx.AsyncClient", return_value=mock_client):
+            resp = await client.post(
+                "/proxy/vertex/v1/projects/proj/locations/us-central1/endpoints/openapi/chat/completions",
+                json={"model": "google/gemini-1.5-flash", "messages": [{"role": "user", "content": "Hi"}]},
+            )
+    assert resp.status_code == 200
+    assert captured["headers"].get("authorization") == "Bearer ya29.mock"
+    assert "aiplatform.googleapis.com" in captured["url"]

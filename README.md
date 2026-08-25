@@ -31,6 +31,60 @@ pip install -r requirements.txt
 # or: pip install -e ".[dashboard,dev,example]"
 ```
 
+## Product owner setup (plug and play)
+
+Any product owner can add metering with a config JSON — **API keys and/or a GCP service-account JSON** — without changing application source.
+
+1. Copy the example config and fill in credentials:
+
+```bash
+cp examples/agent_metering.config.example.json agent_metering.config.json
+# Edit: openai/anthropic api_key and/or vertex.credentials_json path
+```
+
+Example shape:
+
+```json
+{
+  "customer_id": "acme_corp",
+  "feature": "default",
+  "providers": {
+    "openai": { "api_key": "sk-..." },
+    "vertex": {
+      "project_id": "my-gcp-project",
+      "location": "us-central1",
+      "credentials_json": "./service-account.json"
+    }
+  }
+}
+```
+
+2. Run your existing app through the proxy (keys live on the **proxy**; the app only needs base URL env injection):
+
+```bash
+python -m agent_metering run --config agent_metering.config.json --start-proxy -- python your_app.py
+```
+
+Or start the proxy yourself:
+
+```bash
+export AGENT_METERING_CONFIG=./agent_metering.config.json
+uvicorn agent_metering.proxy:app --port 8787
+```
+
+3. View spend:
+
+```bash
+python -m streamlit run examples/dashboard.py
+```
+
+- **API key providers:** OpenAI, Anthropic, Azure, Gemini — proxy injects keys when the client omits them.
+- **GCP Vertex AI:** put the service-account JSON path (or inline JSON object) under `providers.vertex`. Requires `pip install "agent-metering[vertex]"`. OpenAI-compatible Vertex base (also set as `VERTEX_OPENAI_BASE_URL` by the CLI):  
+  `http://127.0.0.1:8787/proxy/vertex/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi`
+- Do not commit `agent_metering.config.json` or service-account JSON files (gitignored).
+
+Env overrides still work: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.
+
 ## Zero code change
 
 If your app uses the official OpenAI / Anthropic SDKs **without** a hardcoded `base_url`, you can add metering with **no application source changes**.
@@ -107,6 +161,7 @@ python -m streamlit run examples/dashboard.py
 | Anthropic | `http://localhost:8787/proxy/anthropic` | `api.anthropic.com` |
 | Azure OpenAI | `http://localhost:8787/proxy/azure/v1` | `AZURE_OPENAI_BASE_URL` env on proxy |
 | Gemini | `http://localhost:8787/proxy/gemini` | Google Generative Language API |
+| Vertex AI | `http://localhost:8787/proxy/vertex/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi` | `{LOCATION}-aiplatform.googleapis.com` (service-account JSON) |
 | Custom | `http://localhost:8787/proxy/{name}/...` | Defined in `agent_metering/providers.yaml` |
 
 Legacy alias (OpenAI only): `base_url="http://localhost:8787/v1"` still works.
@@ -119,8 +174,9 @@ Zero-code env equivalents (set on the **app** process):
 | Anthropic | `ANTHROPIC_BASE_URL` |
 | Azure | `AZURE_OPENAI_BASE_URL` / `AZURE_OPENAI_ENDPOINT` |
 | Gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_BASE` |
+| Vertex (OpenAI-compatible) | `VERTEX_OPENAI_BASE_URL` (set by CLI when config has vertex) |
 
-Proxy attribution defaults (set on the **proxy** process): `AGENT_METERING_CUSTOMER_ID`, `AGENT_METERING_FEATURE`.
+Proxy attribution defaults: `AGENT_METERING_CUSTOMER_ID`, `AGENT_METERING_FEATURE`, or `customer_id` / `feature` in the config JSON. Config path: `AGENT_METERING_CONFIG`.
 
 ### OpenAI example
 
@@ -176,6 +232,8 @@ python examples/demo_no_api_key.py
 agent_metering/
   proxy.py
   cli.py
+  config.py
+  vertex_auth.py
   providers/
     registry.py
     extractors.py
@@ -185,6 +243,7 @@ agent_metering/
   pricing.py
   alerts.py
 examples/
+  agent_metering.config.example.json
   proxy_client_example.py
   proxy_env_only_example.py
   proxy_anthropic_example.py

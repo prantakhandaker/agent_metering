@@ -10,8 +10,16 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Mapping, MutableMapping, Optional, Sequence
 
+from agent_metering.config import (
+    ENV_CONFIG,
+    get_config,
+    reset_config,
+    resolve_vertex_settings,
+    vertex_openai_compatible_base_url,
+)
 from agent_metering.proxy import ENV_CUSTOMER_ID, ENV_FEATURE
 
 DEFAULT_PROXY_HOST = "127.0.0.1"
@@ -37,6 +45,14 @@ def build_child_env(
     # Common Gemini / Google Generative Language base overrides
     env["GOOGLE_GEMINI_BASE_URL"] = f"{base}/proxy/gemini"
     env["GEMINI_API_BASE"] = f"{base}/proxy/gemini"
+
+    vertex = resolve_vertex_settings()
+    if vertex and vertex.project_id and vertex.location:
+        env["VERTEX_OPENAI_BASE_URL"] = vertex_openai_compatible_base_url(
+            vertex.project_id,
+            vertex.location,
+            proxy_base=base,
+        )
     return env
 
 
@@ -71,9 +87,12 @@ def start_proxy_process(
     port: int,
     customer: Optional[str],
     feature: Optional[str],
+    config_path: Optional[str] = None,
     environ: Optional[MutableMapping[str, str]] = None,
 ) -> subprocess.Popen[bytes]:
     env = dict(environ if environ is not None else os.environ)
+    if config_path:
+        env[ENV_CONFIG] = str(Path(config_path).resolve())
     if customer:
         env[ENV_CUSTOMER_ID] = customer
     if feature:
@@ -107,25 +126,39 @@ def run_command(
     port: int,
     customer: Optional[str],
     feature: Optional[str],
+    config_path: Optional[str] = None,
 ) -> int:
     cmd = _strip_leading_separator(command)
     if not cmd:
         raise SystemExit("Pass a command after options, e.g. -- python my_app.py")
 
+    if config_path:
+        os.environ[ENV_CONFIG] = str(Path(config_path).resolve())
+        reset_config()
+        get_config(force_reload=True)
+
     proxy_proc: Optional[subprocess.Popen[bytes]] = None
     try:
         if start_proxy:
-            if customer is None and feature is None:
+            cfg = get_config()
+            effective_customer = customer or (
+                cfg.customer_id if cfg.customer_id != "unknown" else None
+            )
+            effective_feature = feature or (
+                cfg.feature if cfg.feature != "unknown" else None
+            )
+            if effective_customer is None and effective_feature is None and not config_path:
                 print(
-                    "Note: starting proxy without --customer/--feature; "
-                    f"set {ENV_CUSTOMER_ID}/{ENV_FEATURE} on the proxy for attribution.",
+                    "Note: starting proxy without --customer/--feature/--config; "
+                    f"set {ENV_CUSTOMER_ID}/{ENV_FEATURE} or a config JSON for attribution.",
                     file=sys.stderr,
                 )
             proxy_proc = start_proxy_process(
                 host=host,
                 port=port,
-                customer=customer,
-                feature=feature,
+                customer=effective_customer,
+                feature=effective_feature,
+                config_path=config_path,
             )
             wait_for_proxy(proxy_url)
         elif not proxy_ready(proxy_url):
@@ -141,7 +174,8 @@ def run_command(
             )
 
         child_env = build_child_env(proxy_url)
-        # Resolve executable on PATH for a clean exec/spawn
+        if config_path:
+            child_env[ENV_CONFIG] = str(Path(config_path).resolve())
         resolved = shutil.which(cmd[0]) or cmd[0]
         full_cmd = [resolved, *cmd[1:]]
         completed = subprocess.run(full_cmd, env=child_env)
@@ -201,6 +235,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Default feature for a proxy started with --start-proxy ({ENV_FEATURE})",
     )
     run_p.add_argument(
+        "--config",
+        default=None,
+        dest="config_path",
+        help=(
+            f"Path to agent_metering.config.json (API keys and/or GCP service-account JSON). "
+            f"Sets {ENV_CONFIG} for the proxy process."
+        ),
+    )
+    run_p.add_argument(
         "command",
         nargs=argparse.REMAINDER,
         help="Command to run (use -- before it), e.g. -- python my_app.py",
@@ -223,6 +266,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             port=args.port,
             customer=args.customer,
             feature=args.feature,
+            config_path=args.config_path,
         )
     parser.error(f"Unknown command: {args.command_name}")
     return 2

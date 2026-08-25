@@ -1,4 +1,4 @@
-"""Universal LLM proxy — meter usage for OpenAI, Anthropic, Azure, Gemini, and custom APIs."""
+"""Universal LLM proxy — meter usage for OpenAI, Anthropic, Azure, Gemini, Vertex, and custom APIs."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
+from agent_metering.config import (
+    get_config,
+    resolve_api_key,
+    resolve_vertex_settings,
+)
 from agent_metering.core import Meter
 from agent_metering.providers.extractors import (
     extract_usage,
@@ -41,10 +46,69 @@ ENV_FEATURE = "AGENT_METERING_FEATURE"
 
 
 def _attribution_defaults() -> tuple[str, str]:
+    cfg = get_config()
     return (
-        os.environ.get(ENV_CUSTOMER_ID, "unknown"),
-        os.environ.get(ENV_FEATURE, "unknown"),
+        os.environ.get(ENV_CUSTOMER_ID) or cfg.customer_id or "unknown",
+        os.environ.get(ENV_FEATURE) or cfg.feature or "unknown",
     )
+
+
+def _header_present(headers: dict[str, str], *names: str) -> bool:
+    lower = {k.lower() for k in headers}
+    return any(n.lower() in lower for n in names)
+
+
+def _inject_upstream_auth(forward: dict[str, str], cfg: ProviderConfig) -> None:
+    """Add provider credentials from config/env when the client omitted them."""
+    name = cfg.name
+
+    if name == "vertex":
+        if _header_present(forward, "Authorization"):
+            return
+        settings = resolve_vertex_settings()
+        if settings is None:
+            return
+        if settings.api_key:
+            forward["Authorization"] = f"Bearer {settings.api_key}"
+            return
+        if settings.credentials_json:
+            try:
+                from agent_metering.vertex_auth import get_access_token
+
+                token = get_access_token(settings.credentials_json)
+                forward["Authorization"] = f"Bearer {token}"
+            except Exception:
+                logger.exception(
+                    "Failed to mint Vertex access token from service-account JSON"
+                )
+        return
+
+    api_key = resolve_api_key(name)
+    if not api_key:
+        return
+
+    if name == "anthropic":
+        if not _header_present(forward, "x-api-key", "Authorization"):
+            forward["x-api-key"] = api_key
+        if not _header_present(forward, "anthropic-version"):
+            forward["anthropic-version"] = "2023-06-01"
+        return
+
+    if name == "gemini":
+        if _header_present(forward, "Authorization", "x-goog-api-key"):
+            return
+        forward["x-goog-api-key"] = api_key
+        return
+
+    if name == "azure":
+        if _header_present(forward, "Authorization", "api-key"):
+            return
+        forward["api-key"] = api_key
+        return
+
+    # openai + custom defaults
+    if not _header_present(forward, "Authorization"):
+        forward["Authorization"] = f"Bearer {api_key}"
 
 
 def create_app() -> FastAPI:
@@ -91,6 +155,7 @@ def _collect_forward_headers(request: Request, cfg: ProviderConfig) -> dict[str,
                 forward[key] = value
     if "content-type" not in {k.lower() for k in forward}:
         forward["Content-Type"] = request.headers.get("content-type", "application/json")
+    _inject_upstream_auth(forward, cfg)
     return forward
 
 
@@ -206,7 +271,9 @@ async def _forward_request(
 
         try:
             data = upstream.json()
-            model, prompt, completion = extract_usage(cfg, data, request_model=request_model)
+            model, prompt, completion = extract_usage(
+                cfg, data, request_model=request_model
+            )
             if prompt or completion:
                 t.record(
                     provider=cfg.provider_label,

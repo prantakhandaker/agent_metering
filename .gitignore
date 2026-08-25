@@ -21,6 +21,11 @@ agent_metering.db
 .env
 .env.*
 !.env.example
+agent_metering.config.json
+*-service-account.json
+service-account.json
+**/credentials.json
+**/serviceAccountKey.json
 
 # Test / IDE
 .pytest_cache/

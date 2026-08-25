@@ -66,7 +66,33 @@ def _builtin_providers() -> dict[str, ProviderConfig]:
             usage_extractor="gemini",
             stream_mode="none",
         ),
+        # Vertex AI — base host only; OpenAI-compatible path includes project/location.
+        # Auth via OAuth from service-account JSON (see agent_metering.vertex_auth).
+        "vertex": ProviderConfig(
+            name="vertex",
+            base_url=_vertex_host(),
+            provider_label="vertex_ai",
+            auth_headers=["Authorization"],
+            usage_extractor="openai",
+            stream_mode="openai_sse",
+        ),
     }
+
+
+def _vertex_host() -> str:
+    """Vertex AI API host from config/env location (default us-central1)."""
+    location = "us-central1"
+    try:
+        from agent_metering.config import resolve_vertex_settings
+
+        settings = resolve_vertex_settings()
+        if settings and settings.location:
+            location = settings.location
+    except Exception:
+        location = os.getenv("VERTEX_LOCATION") or os.getenv(
+            "GOOGLE_CLOUD_LOCATION", "us-central1"
+        )
+    return f"https://{location}-aiplatform.googleapis.com"
 
 
 def _load_yaml_providers(config_path: Path) -> dict[str, ProviderConfig]:

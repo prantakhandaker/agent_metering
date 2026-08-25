@@ -11,3 +11,4 @@ pyyaml>=6.0.0
 # openai>=1.0.0
 # anthropic>=0.25.0
 # google-cloud-bigquery>=3.11.0
+# google-auth>=2.22.0  # Vertex AI service-account JSON (pip install "agent-metering[vertex]")
