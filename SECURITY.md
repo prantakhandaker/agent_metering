@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied on the latest `main` branch and released versions of `agent-metering` when practical.
+Security fixes are applied on the latest `main` branch and released versions of `llm-agent-metering` when practical.
 
 ## Reporting a vulnerability
 

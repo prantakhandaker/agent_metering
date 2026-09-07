@@ -43,7 +43,7 @@ python -m build
 twine upload dist/*
 ```
 
-Requires a PyPI account and API token for the `agent-metering` project.
+Requires a PyPI account and Trusted Publishing for the `llm-agent-metering` project (see README Releasing).
 
 ## Security
 

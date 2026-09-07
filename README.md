@@ -11,10 +11,10 @@
 ## Install
 
 ```bash
-pip install agent-metering
+pip install llm-agent-metering
 # optional extras:
-# pip install "agent-metering[dashboard]"
-# pip install "agent-metering[example]"
+# pip install "llm-agent-metering[dashboard]"
+# pip install "llm-agent-metering[example]"
 ```
 
 From GitHub (latest main):
@@ -28,7 +28,7 @@ pip install "git+https://github.com/prantakhandaker/agent_metering.git"
 Run the proxy once, then set your SDK **base URL** to it. No SDK install in the app language required.
 
 ```bash
-pip install agent-metering
+pip install llm-agent-metering
 python -m uvicorn agent_metering.proxy:app --host 0.0.0.0 --port 8787
 ```
 
@@ -49,7 +49,7 @@ Defaults: env `AGENT_METERING_CUSTOMER_ID` / `AGENT_METERING_FEATURE`, else `def
 Spend → local SQLite `agent_metering.db`. Dashboard:
 
 ```bash
-python -m streamlit run examples/dashboard.py   # pip install "agent-metering[dashboard]"
+python -m streamlit run examples/dashboard.py   # pip install "llm-agent-metering[dashboard]"
 ```
 
 ### Node
@@ -110,7 +110,7 @@ python -m agent_metering run --start-proxy -- python your_app.py
 Same venv install auto-patches OpenAI / Anthropic SDKs (no base URL change):
 
 ```bash
-pip install agent-metering
+pip install llm-agent-metering
 # run your Python app — no import required
 ```
 
@@ -145,17 +145,18 @@ pytest
 Maintainers publish to PyPI via GitHub Actions Trusted Publishing (no API token in secrets).
 
 1. One-time on [pypi.org](https://pypi.org): **Publishing → Pending publisher**
-   - Project: `agent-metering`
+   - Project: `llm-agent-metering`
    - Owner: `prantakhandaker`
    - Repository: `agent_metering`
    - Workflow: `publish.yml`
+   - Environment: **leave empty**
 2. Bump `version` in `pyproject.toml` to match the release tag.
 3. Tag and release:
 
 ```bash
 # version in pyproject.toml must match the tag
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 # then GitHub → Releases → Draft release from that tag → Publish
 ```
 
