@@ -1,75 +1,58 @@
 # agent_metering
 
-Universal **LLM metering proxy** for B2B SaaS: track **cost per customer and per feature** without changing your LLM call sites — point your client at `/proxy/{provider}/...`.
+Import-once **LLM cost metering** for B2B SaaS: put `customer_id` / `feature` in a config JSON, `import agent_metering`, optionally `set_user` per request — existing OpenAI / Anthropic calls are tracked automatically.
 
 ## Why
 
-Flat API rate limits do not protect margin. Agent workloads are open-ended: tool loops, retries, and long contexts can burn thousands of tokens per interaction. A single runaway agent loop can quietly wipe out customer margin before anyone notices. `agent_metering` sits in front of LLM APIs, records every call with customer/feature tags, prices it locally, and surfaces spend in a dashboard.
+Flat API rate limits do not protect margin. Agent workloads are open-ended: tool loops, retries, and long contexts can burn thousands of tokens per interaction. A single runaway agent loop can quietly wipe out customer margin before anyone notices.
 
 ## Install
 
-### From GitHub
-
-```bash
-git clone https://github.com/prantakhandaker/agent_metering.git
-cd agent_metering
-pip install -e ".[dashboard,dev,example]"
-uvicorn agent_metering.proxy:app --port 8787
-```
-
-Or without cloning:
-
 ```bash
 pip install "git+https://github.com/prantakhandaker/agent_metering.git"
-uvicorn agent_metering.proxy:app --port 8787
+# or from a clone:
+pip install -e ".[dashboard,dev,example]"
 ```
 
-### From a local checkout
+## Product owner setup (primary)
 
-```bash
-pip install -r requirements.txt
-# or: pip install -e ".[dashboard,dev,example]"
-```
-
-## Product owner setup (plug and play)
-
-Any product owner can add metering with a config JSON — **API keys and/or a GCP service-account JSON** — without changing application source.
-
-1. Copy the example config and fill in credentials:
+1. Copy config and set defaults (and optional proxy keys if you use the sidecar later):
 
 ```bash
 cp examples/agent_metering.config.example.json agent_metering.config.json
-# Edit: openai/anthropic api_key and/or vertex.credentials_json path
 ```
-
-Example shape:
 
 ```json
 {
   "customer_id": "acme_corp",
   "feature": "default",
   "providers": {
-    "openai": { "api_key": "sk-..." },
-    "vertex": {
-      "project_id": "my-gcp-project",
-      "location": "us-central1",
-      "credentials_json": "./service-account.json"
-    }
+    "openai": { "api_key": "sk-..." }
   }
 }
 ```
 
-2. Run your existing app through the proxy (keys live on the **proxy**; the app only needs base URL env injection):
+On the **import** path, your app still uses its own `OPENAI_API_KEY` / `api_key=` on the client. Config `customer_id` / `feature` are defaults for attribution. Provider `api_key` entries are used by the **optional proxy**.
 
-```bash
-python -m agent_metering run --config agent_metering.config.json --start-proxy -- python your_app.py
+2. In your app entrypoint:
+
+```python
+import agent_metering  # auto-enables when agent_metering.config.json exists
+
+# Optional: once per HTTP request — NOT around every LLM call
+@app.middleware("http")
+async def metering_user(request, call_next):
+    agent_metering.set_user(getattr(request.state, "user_id", None) or "anonymous")
+    agent_metering.set_feature("api")
+    return await call_next(request)
+
+# Existing OpenAI() / Anthropic() code unchanged
 ```
 
-Or start the proxy yourself:
+Without middleware, all calls use `customer_id` / `feature` from the config JSON.
 
 ```bash
-export AGENT_METERING_CONFIG=./agent_metering.config.json
-uvicorn agent_metering.proxy:app --port 8787
+python examples/auto_instrument_example.py
 ```
 
 3. View spend:
@@ -78,185 +61,71 @@ uvicorn agent_metering.proxy:app --port 8787
 python -m streamlit run examples/dashboard.py
 ```
 
-- **API key providers:** OpenAI, Anthropic, Azure, Gemini — proxy injects keys when the client omits them.
-- **GCP Vertex AI:** put the service-account JSON path (or inline JSON object) under `providers.vertex`. Requires `pip install "agent-metering[vertex]"`. OpenAI-compatible Vertex base (also set as `VERTEX_OPENAI_BASE_URL` by the CLI):  
-  `http://127.0.0.1:8787/proxy/vertex/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi`
-- Do not commit `agent_metering.config.json` or service-account JSON files (gitignored).
+Force on/off: `AGENT_METERING_AUTO=1` or `0`, or `agent_metering.enable()` / `disable()`.  
+Do not commit `agent_metering.config.json` or service-account JSON (gitignored).
 
-Env overrides still work: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.
+## Optional: proxy / sidecar (no import)
 
-## Zero code change
-
-If your app uses the official OpenAI / Anthropic SDKs **without** a hardcoded `base_url`, you can add metering with **no application source changes**.
-
-1. Run the proxy with attribution defaults (customer / feature for all traffic):
+Use when you cannot import into the app process. Point SDK base-URL env vars at the proxy; keys can live in the config JSON for the proxy to inject.
 
 ```bash
-export AGENT_METERING_CUSTOMER_ID=acme_corp
-export AGENT_METERING_FEATURE=support_bot
+python -m agent_metering run --config agent_metering.config.json --start-proxy -- python your_app.py
+```
+
+Or:
+
+```bash
+export AGENT_METERING_CONFIG=./agent_metering.config.json
 uvicorn agent_metering.proxy:app --port 8787
-```
-
-2. Point SDK base-URL env vars at the proxy (deploy config, shell, or sidecar):
-
-```bash
 export OPENAI_BASE_URL=http://127.0.0.1:8787/proxy/openai/v1
-export ANTHROPIC_BASE_URL=http://127.0.0.1:8787/proxy/anthropic
-# then start your existing app unchanged
-python my_app.py
+python your_app.py
 ```
 
-Or let the CLI inject those env vars and optionally start the proxy:
+Sole proxy demo: `examples/proxy_env_only_example.py`.  
+Docker: `docker compose -f examples/docker-compose.sidecar.yml up --build`.
 
-```bash
-python -m agent_metering run --start-proxy --customer acme_corp --feature support_bot -- python my_app.py
-```
+| Provider | App `base_url` / env |
+|----------|----------------------|
+| OpenAI | `.../proxy/openai/v1` · `OPENAI_BASE_URL` |
+| Anthropic | `.../proxy/anthropic` · `ANTHROPIC_BASE_URL` |
+| Azure | `.../proxy/azure/v1` |
+| Gemini | `.../proxy/gemini` |
+| Vertex | `.../proxy/vertex/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi` · `VERTEX_OPENAI_BASE_URL` |
 
-(`agent-metering` works after `pip install` when console scripts are allowed; on some Windows setups the `.exe` shim is blocked — use `python -m agent_metering` instead.)
-
-Docker Compose sidecar (app image unchanged; only env overrides):
-
-```bash
-export OPENAI_API_KEY=sk-...
-docker compose -f examples/docker-compose.sidecar.yml up --build
-```
-
-Env-only example (client constructed with no `base_url`):
-
-```bash
-python -m agent_metering run --start-proxy --customer acme_corp --feature support_bot -- `
-  python examples/proxy_env_only_example.py
-```
-
-Limitation: apps that **hardcode** `base_url` to the real provider bypass env injection. Request headers `X-Customer-Id` / `X-Feature` still override proxy env defaults when present.
-
-## How customers connect (minimal code)
-
-After the proxy is running, point your LLM client at it — change only `base_url` (and optional attribution headers). No other call-site changes.
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    api_key="sk-...",
-    base_url="http://localhost:8787/proxy/openai/v1",
-    default_headers={
-        "X-Customer-Id": "acme_corp",
-        "X-Feature": "support_bot",
-    },
-)
-```
-
-Then view spend:
-
-```bash
-python -m streamlit run examples/dashboard.py
-```
-
-## Supported providers
-
-| Provider | Customer `base_url` | Upstream |
-|----------|---------------------|----------|
-| OpenAI | `http://localhost:8787/proxy/openai/v1` | `api.openai.com` |
-| Anthropic | `http://localhost:8787/proxy/anthropic` | `api.anthropic.com` |
-| Azure OpenAI | `http://localhost:8787/proxy/azure/v1` | `AZURE_OPENAI_BASE_URL` env on proxy |
-| Gemini | `http://localhost:8787/proxy/gemini` | Google Generative Language API |
-| Vertex AI | `http://localhost:8787/proxy/vertex/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi` | `{LOCATION}-aiplatform.googleapis.com` (service-account JSON) |
-| Custom | `http://localhost:8787/proxy/{name}/...` | Defined in `agent_metering/providers.yaml` |
-
-Legacy alias (OpenAI only): `base_url="http://localhost:8787/v1"` still works.
-
-Zero-code env equivalents (set on the **app** process):
-
-| Provider | Env var |
-|----------|---------|
-| OpenAI | `OPENAI_BASE_URL` |
-| Anthropic | `ANTHROPIC_BASE_URL` |
-| Azure | `AZURE_OPENAI_BASE_URL` / `AZURE_OPENAI_ENDPOINT` |
-| Gemini | `GOOGLE_GEMINI_BASE_URL` / `GEMINI_API_BASE` |
-| Vertex (OpenAI-compatible) | `VERTEX_OPENAI_BASE_URL` (set by CLI when config has vertex) |
-
-Proxy attribution defaults: `AGENT_METERING_CUSTOMER_ID`, `AGENT_METERING_FEATURE`, or `customer_id` / `feature` in the config JSON. Config path: `AGENT_METERING_CONFIG`.
-
-### OpenAI example
-
-```bash
-python examples/proxy_client_example.py
-```
-
-### Anthropic example
-
-```bash
-pip install anthropic
-export ANTHROPIC_API_KEY=...
-python examples/proxy_anthropic_example.py
-```
-
-### Azure OpenAI example (responses.create)
-
-Set on the **proxy** host:
-
-```bash
-export AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com/openai/v1
-export AZURE_OPENAI_API_KEY=...
-python examples/proxy_azure_example.py
-```
-
-### Custom provider via `providers.yaml`
-
-Edit [`agent_metering/providers.yaml`](agent_metering/providers.yaml):
-
-```yaml
-providers:
-  my_custom_llm:
-    base_url: https://llm.mycompany.com
-    provider_label: my_custom_llm
-    auth_headers: [Authorization]
-    model_path: model
-    input_tokens_path: usage.prompt_tokens
-    output_tokens_path: usage.completion_tokens
-    stream_mode: openai_sse
-```
-
-Customer connects: `base_url="http://localhost:8787/proxy/my_custom_llm/v1"`.
-
-## Demo (no API key)
-
-```bash
-python examples/demo_no_api_key.py
-```
+Custom providers: [`agent_metering/providers.yaml`](agent_metering/providers.yaml). Vertex needs `pip install "agent-metering[vertex]"`.
 
 ## Project layout
 
+**Primary**
+
 ```
 agent_metering/
-  proxy.py
-  cli.py
+  __init__.py      # import + auto-enable
+  instrument.py    # OpenAI / Anthropic patches
+  context.py       # set_user / set_feature
   config.py
-  vertex_auth.py
-  providers/
-    registry.py
-    extractors.py
-  providers.yaml
   core.py
   storage.py
   pricing.py
   alerts.py
 examples/
   agent_metering.config.example.json
-  proxy_client_example.py
+  auto_instrument_example.py
+  dashboard.py
+```
+
+**Optional (proxy)**
+
+```
+agent_metering/
+  proxy.py
+  cli.py
+  vertex_auth.py
+  providers/
+examples/
   proxy_env_only_example.py
-  proxy_anthropic_example.py
-  proxy_azure_example.py
   docker-compose.sidecar.yml
   Dockerfile.proxy
-  dashboard.py
-  demo_no_api_key.py
-tests/
-pyproject.toml
-requirements.txt
-LICENSE
-README.md
 ```
 
 ## Tests
@@ -267,6 +136,6 @@ pytest
 
 ## Roadmap
 
-- Hosted proxy URL (multi-tenant SaaS)
+- Streaming call metering on the import path
+- Hosted multi-tenant dashboard
 - Postgres storage backend
-- Auth / API for hosted dashboard

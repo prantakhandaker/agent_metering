@@ -48,7 +48,7 @@ with col_left:
         st.bar_chart(df_c.set_index("customer_id")["total_cost_usd"])
         st.dataframe(df_c, use_container_width=True)
     else:
-        st.info("No customer usage recorded yet. Run examples/demo_no_api_key.py first.")
+        st.info("No customer usage recorded yet. Run examples/auto_instrument_example.py first.")
 
 with col_right:
     st.subheader("Cost by feature")
