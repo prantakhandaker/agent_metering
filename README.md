@@ -8,12 +8,27 @@
 
 **MIT open source** — [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
 
+## Install
+
+```bash
+pip install agent-metering
+# optional extras:
+# pip install "agent-metering[dashboard]"
+# pip install "agent-metering[example]"
+```
+
+From GitHub (latest main):
+
+```bash
+pip install "git+https://github.com/prantakhandaker/agent_metering.git"
+```
+
 ## Any language (recommended)
 
 Run the proxy once, then set your SDK **base URL** to it. No SDK install in the app language required.
 
 ```bash
-pip install "git+https://github.com/prantakhandaker/agent_metering.git"
+pip install agent-metering
 python -m uvicorn agent_metering.proxy:app --host 0.0.0.0 --port 8787
 ```
 
@@ -95,7 +110,7 @@ python -m agent_metering run --start-proxy -- python your_app.py
 Same venv install auto-patches OpenAI / Anthropic SDKs (no base URL change):
 
 ```bash
-pip install "git+https://github.com/prantakhandaker/agent_metering.git"
+pip install agent-metering
 # run your Python app — no import required
 ```
 
@@ -124,6 +139,27 @@ Flat API rate limits do not protect margin. Agent workloads are open-ended: tool
 ```bash
 pytest
 ```
+
+## Releasing
+
+Maintainers publish to PyPI via GitHub Actions Trusted Publishing (no API token in secrets).
+
+1. One-time on [pypi.org](https://pypi.org): **Publishing → Pending publisher**
+   - Project: `agent-metering`
+   - Owner: `prantakhandaker`
+   - Repository: `agent_metering`
+   - Workflow: `publish.yml`
+2. Bump `version` in `pyproject.toml` to match the release tag.
+3. Tag and release:
+
+```bash
+# version in pyproject.toml must match the tag
+git tag v0.3.0
+git push origin v0.3.0
+# then GitHub → Releases → Draft release from that tag → Publish
+```
+
+Publishing workflow: [`.github/workflows/publish.yml`](.github/workflows/publish.yml).
 
 ## License
 
