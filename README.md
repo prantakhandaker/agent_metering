@@ -1,6 +1,18 @@
 # agent_metering
 
+[![CI](https://github.com/prantakhandaker/agent_metering/actions/workflows/ci.yml/badge.svg)](https://github.com/prantakhandaker/agent_metering/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 Import-once **LLM cost metering** for B2B SaaS: put `customer_id` / `feature` in a config JSON, `import agent_metering`, optionally `set_user` per request — existing OpenAI / Anthropic calls are tracked automatically.
+
+**MIT open source** — [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## Who this is for / not for
+
+**For:** Multi-tenant SaaS teams that need simple **per-customer / per-feature** LLM spend visibility with minimal integration (import + config).
+
+**Not for:** Full tracing/evals (use Langfuse), multi-provider gateways with routing (use LiteLLM / Portkey), or finance-grade invoice reconciliation. This library meters and attributes cost; it does not replace those stacks.
 
 ## Why
 
@@ -13,6 +25,8 @@ pip install "git+https://github.com/prantakhandaker/agent_metering.git"
 # or from a clone:
 pip install -e ".[dashboard,dev,example]"
 ```
+
+When published to PyPI: `pip install agent-metering` (see [CONTRIBUTING.md](CONTRIBUTING.md) for maintainer upload steps).
 
 ## Product owner setup (primary)
 
@@ -139,3 +153,7 @@ pytest
 - Streaming call metering on the import path
 - Hosted multi-tenant dashboard
 - Postgres storage backend
+
+## License
+
+[MIT](LICENSE)
