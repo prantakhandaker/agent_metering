@@ -1,8 +1,9 @@
-"""CLI for zero-code metering: inject provider base URLs and run a child process."""
+"""CLI for plug-and-play metering: init config, or inject base URLs and run a child process."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -14,13 +15,15 @@ from pathlib import Path
 from typing import Mapping, MutableMapping, Optional, Sequence
 
 from agent_metering.config import (
+    DEFAULT_CONFIG_NAME,
     ENV_CONFIG,
+    ENV_CUSTOMER_ID,
+    ENV_FEATURE,
     get_config,
     reset_config,
     resolve_vertex_settings,
     vertex_openai_compatible_base_url,
 )
-from agent_metering.proxy import ENV_CUSTOMER_ID, ENV_FEATURE
 
 DEFAULT_PROXY_HOST = "127.0.0.1"
 DEFAULT_PROXY_PORT = 8787
@@ -28,6 +31,37 @@ DEFAULT_PROXY_PORT = 8787
 
 def normalize_proxy_url(url: str) -> str:
     return url.rstrip("/")
+
+
+def init_config(
+    *,
+    path: Optional[str] = None,
+    customer: str = "default",
+    feature: str = "default",
+    force: bool = False,
+) -> Path:
+    """Write a minimal agent_metering.config.json for plug-and-play import path."""
+    target = Path(path) if path else Path.cwd() / DEFAULT_CONFIG_NAME
+    if target.is_file() and not force:
+        raise SystemExit(
+            f"{target} already exists. Pass --force to overwrite, or choose --path."
+        )
+    payload = {
+        "customer_id": customer,
+        "feature": feature,
+        "providers": {},
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote {target.resolve()}")
+    print()
+    print("Next steps:")
+    print("  1. Add this as the first import in your app:")
+    print("       import agent_metering")
+    print("  2. Keep using OpenAI() / Anthropic() as usual (your own API keys).")
+    print("  3. Optional per-user: agent_metering.set_user(user_id) in middleware.")
+    print("  4. View spend: python -m streamlit run examples/dashboard.py")
+    return target
 
 
 def build_child_env(
@@ -193,11 +227,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-metering",
         description=(
-            "Zero-code LLM metering: point official SDK base-URL env vars at the "
-            "proxy and run your existing app unchanged."
+            "Plug-and-play LLM cost metering: init config for import-once setup, "
+            "or run a child app through the optional proxy."
         ),
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
+
+    init_p = sub.add_parser(
+        "init",
+        help="Write agent_metering.config.json for import-once plug-and-play",
+    )
+    init_p.add_argument(
+        "--path",
+        default=None,
+        help=f"Config file path (default: ./{DEFAULT_CONFIG_NAME})",
+    )
+    init_p.add_argument(
+        "--customer",
+        default="default",
+        help="Default customer_id in the config (default: default)",
+    )
+    init_p.add_argument(
+        "--feature",
+        default="default",
+        help="Default feature in the config (default: default)",
+    )
+    init_p.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing config file",
+    )
 
     run_p = sub.add_parser(
         "run",
@@ -254,6 +313,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command_name == "init":
+        init_config(
+            path=args.path,
+            customer=args.customer,
+            feature=args.feature,
+            force=args.force,
+        )
+        return 0
     if args.command_name == "run":
         proxy_url = args.proxy_url
         if args.start_proxy:

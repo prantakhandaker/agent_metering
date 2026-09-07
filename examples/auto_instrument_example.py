@@ -1,6 +1,12 @@
 """Import-first plug-and-play demo (no API key required).
 
-Shows: enable instrumentation → set_user → OpenAI-shaped response is metered.
+Easiest path in a real app::
+
+  pip install "git+https://github.com/prantakhandaker/agent_metering.git"
+  python -m agent_metering init
+  # then: import agent_metering  at the top of your app
+
+This script shows metering without calling a live API::
 
   python examples/auto_instrument_example.py
 """

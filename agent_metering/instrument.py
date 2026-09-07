@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from agent_metering.config import default_config_path, get_config, reset_config
+from agent_metering.config import get_config, reset_config
 from agent_metering.context import get_feature, get_user
 from agent_metering.core import Meter
+from agent_metering.frameworks import disable_frameworks, enable_frameworks
+from agent_metering.user_detect import user_from_llm_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +37,19 @@ def is_enabled() -> bool:
     return _ENABLED
 
 
-def _attribution() -> tuple[str, str]:
+def _attribution(*, call_user: Optional[str] = None) -> tuple[str, str]:
+    """Resolve customer/feature: set_user > framework context > LLM kwargs > config > default."""
     cfg = get_config()
-    user = get_user() or cfg.customer_id or "unknown"
-    feature = get_feature() or cfg.feature or "unknown"
+    user = get_user() or call_user or cfg.customer_id or "default"
+    feature = get_feature() or cfg.feature or "default"
     return user, feature
 
 
-def _record_openai_response(response: Any) -> None:
+def _record_openai_response(
+    response: Any,
+    *,
+    call_user: Optional[str] = None,
+) -> None:
     try:
         usage = getattr(response, "usage", None)
         if usage is None:
@@ -59,7 +66,7 @@ def _record_openai_response(response: Any) -> None:
         if prompt == 0 and completion == 0:
             return
         model = getattr(response, "model", "unknown") or "unknown"
-        customer_id, feature = _attribution()
+        customer_id, feature = _attribution(call_user=call_user)
         with get_meter().track(customer_id=customer_id, feature=feature) as t:
             t.record(
                 provider="openai",
@@ -71,7 +78,11 @@ def _record_openai_response(response: Any) -> None:
         logger.exception("agent_metering: failed to record OpenAI usage")
 
 
-def _record_anthropic_response(response: Any) -> None:
+def _record_anthropic_response(
+    response: Any,
+    *,
+    call_user: Optional[str] = None,
+) -> None:
     try:
         usage = getattr(response, "usage", None)
         if usage is None:
@@ -81,7 +92,7 @@ def _record_anthropic_response(response: Any) -> None:
         if prompt == 0 and completion == 0:
             return
         model = getattr(response, "model", "unknown") or "unknown"
-        customer_id, feature = _attribution()
+        customer_id, feature = _attribution(call_user=call_user)
         with get_meter().track(customer_id=customer_id, feature=feature) as t:
             t.record(
                 provider="anthropic",
@@ -95,8 +106,9 @@ def _record_anthropic_response(response: Any) -> None:
 
 def _wrap_sync(orig, recorder):
     def wrapped(self, *args, **kwargs):
+        call_user = user_from_llm_kwargs(kwargs)
         response = orig(self, *args, **kwargs)
-        recorder(response)
+        recorder(response, call_user=call_user)
         return response
 
     return wrapped
@@ -104,8 +116,9 @@ def _wrap_sync(orig, recorder):
 
 def _wrap_async(orig, recorder):
     async def wrapped(self, *args, **kwargs):
+        call_user = user_from_llm_kwargs(kwargs)
         response = await orig(self, *args, **kwargs)
-        recorder(response)
+        recorder(response, call_user=call_user)
         return response
 
     return wrapped
@@ -113,7 +126,7 @@ def _wrap_async(orig, recorder):
 
 def _patch_openai() -> None:
     try:
-        import openai
+        import openai  # noqa: F401
     except ImportError:
         return
 
@@ -177,7 +190,7 @@ def _patch_anthropic() -> None:
 
 
 def enable(*, force: bool = False) -> bool:
-    """Patch OpenAI/Anthropic SDKs and load config. Idempotent.
+    """Patch OpenAI/Anthropic SDKs + web frameworks. Idempotent.
 
     Returns True if instrumentation is active.
     """
@@ -190,29 +203,30 @@ def enable(*, force: bool = False) -> bool:
     get_config(force_reload=True)
     _patch_openai()
     _patch_anthropic()
+    enable_frameworks()
     _ENABLED = True
     return True
 
 
 def disable() -> None:
-    """Restore original SDK methods (for tests / shutdown)."""
+    """Restore original SDK and framework methods (for tests / shutdown)."""
     global _ENABLED
     for key, (cls, method_name, orig) in list(_ORIG.items()):
         setattr(cls, method_name, orig)
         del _ORIG[key]
+    disable_frameworks()
     _ENABLED = False
 
 
 def maybe_auto_enable() -> bool:
-    """Enable if config file exists or AGENT_METERING_AUTO is truthy."""
+    """Enable instrumentation unless AGENT_METERING_AUTO is explicitly off.
+
+    Config JSON is optional (install-only / .pth autoload). Opt out with
+    ``AGENT_METERING_AUTO=0`` (also ``false`` / ``no`` / ``off``).
+    """
     import os
 
     auto = os.environ.get("AGENT_METERING_AUTO", "").strip().lower()
     if auto in ("0", "false", "no", "off"):
         return False
-    if auto in ("1", "true", "yes", "on"):
-        return enable()
-    path = default_config_path()
-    if path.is_file():
-        return enable()
-    return False
+    return enable()

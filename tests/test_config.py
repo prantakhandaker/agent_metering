@@ -17,11 +17,24 @@ from agent_metering.config import (
 def test_load_config_missing_file(tmp_path, monkeypatch):
     path = tmp_path / "missing.json"
     monkeypatch.setenv(ENV_CONFIG, str(path))
+    monkeypatch.delenv("AGENT_METERING_CUSTOMER_ID", raising=False)
+    monkeypatch.delenv("AGENT_METERING_FEATURE", raising=False)
     reset_config()
     cfg = load_config(path)
-    assert cfg.customer_id == "unknown"
-    assert cfg.feature == "unknown"
+    assert cfg.customer_id == "default"
+    assert cfg.feature == "default"
     assert cfg.providers == {}
+
+
+def test_load_config_env_attribution_without_file(tmp_path, monkeypatch):
+    path = tmp_path / "missing.json"
+    monkeypatch.setenv(ENV_CONFIG, str(path))
+    monkeypatch.setenv("AGENT_METERING_CUSTOMER_ID", "env_cust")
+    monkeypatch.setenv("AGENT_METERING_FEATURE", "env_feat")
+    reset_config()
+    cfg = load_config(path)
+    assert cfg.customer_id == "env_cust"
+    assert cfg.feature == "env_feat"
 
 
 def test_load_config_api_keys_and_vertex(tmp_path, monkeypatch):

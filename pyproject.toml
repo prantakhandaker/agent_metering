@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agent-metering"
 version = "0.3.0"
-description = "Import-once LLM cost metering for B2B SaaS — auto-track spend per customer and feature"
+description = "Language-agnostic LLM cost metering via HTTP proxy — track spend per customer and feature"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

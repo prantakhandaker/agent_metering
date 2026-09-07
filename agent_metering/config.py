@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 ENV_CONFIG = "AGENT_METERING_CONFIG"
+ENV_CUSTOMER_ID = "AGENT_METERING_CUSTOMER_ID"
+ENV_FEATURE = "AGENT_METERING_FEATURE"
 DEFAULT_CONFIG_NAME = "agent_metering.config.json"
+DEFAULT_CUSTOMER_ID = "default"
+DEFAULT_FEATURE = "default"
 
 CredentialsJson = Union[str, dict[str, Any]]
 
@@ -26,10 +30,16 @@ class ProviderCredentials:
 
 @dataclass
 class MeteringConfig:
-    customer_id: str = "unknown"
-    feature: str = "unknown"
+    customer_id: str = DEFAULT_CUSTOMER_ID
+    feature: str = DEFAULT_FEATURE
     providers: dict[str, ProviderCredentials] = field(default_factory=dict)
     config_path: Optional[Path] = None
+
+
+def _env_attribution() -> tuple[str, str]:
+    customer = os.environ.get(ENV_CUSTOMER_ID, "").strip()
+    feature = os.environ.get(ENV_FEATURE, "").strip()
+    return customer, feature
 
 
 _CONFIG: Optional[MeteringConfig] = None
@@ -64,18 +74,36 @@ def _parse_provider(raw: Any) -> Optional[ProviderCredentials]:
 
 
 def load_config(path: Optional[Path] = None) -> MeteringConfig:
-    """Load metering config from JSON. Missing file → empty defaults."""
+    """Load metering config from JSON. Missing file → env / install defaults.
+
+    Attribution priority: ``AGENT_METERING_CUSTOMER_ID`` / ``AGENT_METERING_FEATURE``
+    env → config JSON → ``default``.
+    """
     config_path = Path(path) if path is not None else default_config_path()
+    env_customer, env_feature = _env_attribution()
+
     if not config_path.is_file():
-        return MeteringConfig(config_path=config_path)
+        return MeteringConfig(
+            customer_id=env_customer or DEFAULT_CUSTOMER_ID,
+            feature=env_feature or DEFAULT_FEATURE,
+            config_path=config_path,
+        )
 
     try:
         raw = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return MeteringConfig(config_path=config_path)
+        return MeteringConfig(
+            customer_id=env_customer or DEFAULT_CUSTOMER_ID,
+            feature=env_feature or DEFAULT_FEATURE,
+            config_path=config_path,
+        )
 
     if not isinstance(raw, dict):
-        return MeteringConfig(config_path=config_path)
+        return MeteringConfig(
+            customer_id=env_customer or DEFAULT_CUSTOMER_ID,
+            feature=env_feature or DEFAULT_FEATURE,
+            config_path=config_path,
+        )
 
     providers: dict[str, ProviderCredentials] = {}
     for name, cfg in (raw.get("providers") or {}).items():
@@ -86,8 +114,8 @@ def load_config(path: Optional[Path] = None) -> MeteringConfig:
     customer = raw.get("customer_id")
     feature = raw.get("feature")
     return MeteringConfig(
-        customer_id=str(customer) if customer else "unknown",
-        feature=str(feature) if feature else "unknown",
+        customer_id=env_customer or (str(customer) if customer else DEFAULT_CUSTOMER_ID),
+        feature=env_feature or (str(feature) if feature else DEFAULT_FEATURE),
         providers=providers,
         config_path=config_path,
     )

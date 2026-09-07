@@ -445,3 +445,87 @@ async def test_proxy_injects_vertex_token(client, temp_meter, tmp_path, monkeypa
     assert resp.status_code == 200
     assert captured["headers"].get("authorization") == "Bearer ya29.mock"
     assert "aiplatform.googleapis.com" in captured["url"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_x_user_id_wins_over_env(client, temp_meter, monkeypatch):
+    monkeypatch.setenv("AGENT_METERING_CUSTOMER_ID", "env_customer")
+    mock_response = httpx.Response(
+        200,
+        json=OPENAI_SUCCESS,
+        headers={"content-type": "application/json"},
+    )
+    with patch("agent_metering.proxy.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = _mock_request_response(mock_response)
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={
+                "Authorization": "Bearer sk-test",
+                "X-User-Id": "user_from_header",
+                "X-Customer-Id": "should_lose",
+            },
+        )
+    assert resp.status_code == 200
+    by_customer = temp_meter.cost_by_customer()
+    assert "user_from_header" in by_customer
+    assert "should_lose" not in by_customer
+    assert "env_customer" not in by_customer
+
+
+@pytest.mark.asyncio
+async def test_proxy_body_user_when_headers_missing(client, temp_meter, monkeypatch):
+    monkeypatch.delenv("AGENT_METERING_CUSTOMER_ID", raising=False)
+    mock_response = httpx.Response(
+        200,
+        json=OPENAI_SUCCESS,
+        headers={"content-type": "application/json"},
+    )
+    with patch("agent_metering.proxy.httpx.AsyncClient") as mock_cls:
+        mock_cls.return_value = _mock_request_response(mock_response)
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={
+                "model": "gpt-4o-mini",
+                "user": "body_user_99",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+            headers={"Authorization": "Bearer sk-test"},
+        )
+    assert resp.status_code == 200
+    assert "body_user_99" in temp_meter.cost_by_customer()
+
+
+@pytest.mark.asyncio
+async def test_proxy_x_user_id_not_forwarded_upstream(client, temp_meter):
+    captured = {}
+
+    async def capture_request(method, url, content=None, headers=None):
+        captured["headers"] = {k.lower(): v for k, v in dict(headers or {}).items()}
+        return httpx.Response(
+            200,
+            json=OPENAI_SUCCESS,
+            headers={"content-type": "application/json"},
+        )
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.request = AsyncMock(side_effect=capture_request)
+
+    with patch("agent_metering.proxy.httpx.AsyncClient", return_value=mock_client):
+        resp = await client.post(
+            "/proxy/openai/v1/chat/completions",
+            json={"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}]},
+            headers={
+                "Authorization": "Bearer sk-test",
+                "X-User-Id": "secret_user",
+                "X-Customer-Id": "secret_cust",
+                "X-Feature": "secret_feat",
+            },
+        )
+    assert resp.status_code == 200
+    assert "x-user-id" not in captured["headers"]
+    assert "x-customer-id" not in captured["headers"]
+    assert "x-feature" not in captured["headers"]
+    assert "secret_user" in temp_meter.cost_by_customer()

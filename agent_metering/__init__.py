@@ -1,9 +1,11 @@
 """agent_metering — lightweight LLM cost tracking for B2B AI agents.
 
-Plug-and-play::
+Install-only (site .pth) or import-once::
 
-    import agent_metering  # auto-enables when agent_metering.config.json exists
-    agent_metering.set_user("cust_123")  # once per request (e.g. middleware)
+    pip install agent-metering
+    # or: import agent_metering
+
+    agent_metering.set_user("cust_123")  # optional, once per request
 
 Existing OpenAI / Anthropic calls are metered automatically.
 """

@@ -23,6 +23,11 @@ def clear_user() -> None:
     _user_id.set(None)
 
 
+def reset_user(token: Token) -> None:
+    """Restore user context after a ``set_user`` token."""
+    _user_id.reset(token)
+
+
 def set_feature(feature: Optional[str]) -> Token:
     """Set the current feature tag for auto-instrumented LLM calls."""
     return _feature.set(feature)

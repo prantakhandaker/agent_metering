@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from agent_metering.cli import build_child_env, normalize_proxy_url
+import json
+from pathlib import Path
+
+import pytest
+
+from agent_metering.cli import build_child_env, init_config, main, normalize_proxy_url
 
 
 def test_normalize_proxy_url_strips_trailing_slash():
@@ -25,8 +30,6 @@ def test_build_child_env_injects_provider_base_urls():
 
 def test_build_child_env_vertex_openai_url(monkeypatch):
     from agent_metering.config import ENV_CONFIG, reset_config
-    import json
-    from pathlib import Path
     import tempfile
 
     with tempfile.TemporaryDirectory() as td:
@@ -52,3 +55,36 @@ def test_build_child_env_vertex_openai_url(monkeypatch):
             env["VERTEX_OPENAI_BASE_URL"]
             == "http://127.0.0.1:8787/proxy/vertex/v1/projects/myproj/locations/us-central1/endpoints/openapi"
         )
+
+
+def test_init_config_writes_file(tmp_path):
+    path = tmp_path / "agent_metering.config.json"
+    out = init_config(path=str(path), customer="acme", feature="bot")
+    assert out == path
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["customer_id"] == "acme"
+    assert data["feature"] == "bot"
+    assert data["providers"] == {}
+
+
+def test_init_config_refuses_overwrite(tmp_path):
+    path = tmp_path / "agent_metering.config.json"
+    path.write_text('{"customer_id":"old"}\n', encoding="utf-8")
+    with pytest.raises(SystemExit, match="already exists"):
+        init_config(path=str(path))
+    assert json.loads(path.read_text(encoding="utf-8"))["customer_id"] == "old"
+
+
+def test_init_config_force_overwrite(tmp_path):
+    path = tmp_path / "agent_metering.config.json"
+    path.write_text('{"customer_id":"old"}\n', encoding="utf-8")
+    init_config(path=str(path), customer="new", force=True)
+    assert json.loads(path.read_text(encoding="utf-8"))["customer_id"] == "new"
+
+
+def test_main_init_subcommand(tmp_path):
+    path = tmp_path / "cfg.json"
+    assert main(["init", "--path", str(path), "--customer", "c1"]) == 0
+    assert path.is_file()
+    with pytest.raises(SystemExit):
+        main(["init", "--path", str(path)])

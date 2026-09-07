@@ -166,6 +166,21 @@ def test_maybe_auto_enable_with_config(tmp_path, monkeypatch):
     disable()
 
 
+def test_maybe_auto_enable_without_config(tmp_path, monkeypatch):
+    from agent_metering.config import ENV_CONFIG
+    from agent_metering.instrument import maybe_auto_enable
+
+    disable()
+    missing = tmp_path / "no-such-config.json"
+    monkeypatch.setenv(ENV_CONFIG, str(missing))
+    monkeypatch.delenv("AGENT_METERING_AUTO", raising=False)
+    monkeypatch.delenv("AGENT_METERING_CUSTOMER_ID", raising=False)
+    monkeypatch.delenv("AGENT_METERING_FEATURE", raising=False)
+    assert maybe_auto_enable() is True
+    assert is_enabled()
+    disable()
+
+
 def test_maybe_auto_enable_respects_off(monkeypatch, tmp_path):
     from agent_metering.config import ENV_CONFIG
     from agent_metering.instrument import maybe_auto_enable
@@ -177,3 +192,63 @@ def test_maybe_auto_enable_respects_off(monkeypatch, tmp_path):
     monkeypatch.setenv("AGENT_METERING_AUTO", "0")
     assert maybe_auto_enable() is False
     assert is_enabled() is False
+
+
+def test_autoload_module_enables_without_config(tmp_path, monkeypatch):
+    """Simulates .pth import of agent_metering.autoload."""
+    from agent_metering.config import ENV_CONFIG, reset_config
+
+    disable()
+    missing = tmp_path / "no-config.json"
+    monkeypatch.setenv(ENV_CONFIG, str(missing))
+    monkeypatch.delenv("AGENT_METERING_AUTO", raising=False)
+    reset_config()
+
+    import importlib
+
+    import agent_metering.autoload as autoload
+
+    importlib.reload(autoload)
+    assert is_enabled()
+    disable()
+
+
+def test_autoload_respects_off(tmp_path, monkeypatch):
+    from agent_metering.config import ENV_CONFIG, reset_config
+
+    disable()
+    missing = tmp_path / "no-config.json"
+    monkeypatch.setenv(ENV_CONFIG, str(missing))
+    monkeypatch.setenv("AGENT_METERING_AUTO", "0")
+    reset_config()
+
+    import importlib
+
+    import agent_metering.autoload as autoload
+
+    importlib.reload(autoload)
+    assert is_enabled() is False
+
+
+def test_record_uses_default_attribution_without_config(
+    isolated_meter, tmp_path, monkeypatch
+):
+    from agent_metering.config import ENV_CONFIG, reset_config
+
+    missing = tmp_path / "missing.json"
+    monkeypatch.setenv(ENV_CONFIG, str(missing))
+    monkeypatch.delenv("AGENT_METERING_CUSTOMER_ID", raising=False)
+    monkeypatch.delenv("AGENT_METERING_FEATURE", raising=False)
+    reset_config()
+    ctx.clear_user()
+    ctx.clear_feature()
+
+    _record_openai_response(
+        SimpleNamespace(
+            model="gpt-4o-mini",
+            usage=SimpleNamespace(prompt_tokens=4, completion_tokens=2),
+        )
+    )
+    assert "default" in isolated_meter.cost_by_customer()
+    assert "default" in isolated_meter.cost_by_feature()
+    assert isolated_meter.cost_by_customer()["default"]["total_tokens"] == 6

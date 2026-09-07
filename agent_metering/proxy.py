@@ -12,6 +12,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse
 
 from agent_metering.config import (
+    ENV_CUSTOMER_ID,
+    ENV_FEATURE,
     get_config,
     resolve_api_key,
     resolve_vertex_settings,
@@ -33,6 +35,7 @@ METERING_HEADERS = frozenset(
     h.lower()
     for h in (
         "X-Customer-Id",
+        "X-User-Id",
         "X-Feature",
         "host",
         "content-length",
@@ -40,17 +43,51 @@ METERING_HEADERS = frozenset(
     )
 )
 
-# Proxy-process env defaults when request headers are absent (zero-code path).
-ENV_CUSTOMER_ID = "AGENT_METERING_CUSTOMER_ID"
-ENV_FEATURE = "AGENT_METERING_FEATURE"
-
 
 def _attribution_defaults() -> tuple[str, str]:
     cfg = get_config()
     return (
-        os.environ.get(ENV_CUSTOMER_ID) or cfg.customer_id or "unknown",
-        os.environ.get(ENV_FEATURE) or cfg.feature or "unknown",
+        os.environ.get(ENV_CUSTOMER_ID) or cfg.customer_id or "default",
+        os.environ.get(ENV_FEATURE) or cfg.feature or "default",
     )
+
+
+def _customer_from_body(body: bytes) -> Optional[str]:
+    """OpenAI ``user`` or Anthropic ``metadata.user_id`` / ``metadata.user``."""
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user = payload.get("user")
+    if user is not None and not isinstance(user, bool):
+        text = str(user).strip()
+        if text:
+            return text
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("user_id", "user"):
+            val = metadata.get(key)
+            if val is not None and not isinstance(val, bool):
+                text = str(val).strip()
+                if text:
+                    return text
+    return None
+
+
+def _resolve_customer_id(request: Request, body: bytes, default_customer: str) -> str:
+    """X-User-Id > X-Customer-Id > body user/metadata > env/config default."""
+    header_user = (request.headers.get("X-User-Id") or "").strip()
+    if header_user:
+        return header_user
+    header_customer = (request.headers.get("X-Customer-Id") or "").strip()
+    if header_customer:
+        return header_customer
+    from_body = _customer_from_body(body)
+    if from_body:
+        return from_body
+    return default_customer
 
 
 def _header_present(headers: dict[str, str], *names: str) -> bool:
@@ -209,8 +246,8 @@ async def _handle_proxy_request(
 ) -> Response:
     body = await request.body()
     default_customer, default_feature = _attribution_defaults()
-    customer_id = request.headers.get("X-Customer-Id") or default_customer
-    feature = request.headers.get("X-Feature") or default_feature
+    customer_id = _resolve_customer_id(request, body, default_customer)
+    feature = (request.headers.get("X-Feature") or "").strip() or default_feature
     forward_headers = _collect_forward_headers(request, cfg)
     upstream_url = _build_upstream_url(cfg, path)
     request_model = _request_model(body)
