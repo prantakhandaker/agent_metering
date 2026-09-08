@@ -29,10 +29,24 @@ class ProviderCredentials:
 
 
 @dataclass
+class CustomerAllowance:
+    max_spend_usd: float
+    period: str = "calendar_month"
+
+
+@dataclass
+class EnforcementConfig:
+    enabled: bool = False
+    status_code: int = 429
+    allowances: dict[str, CustomerAllowance] = field(default_factory=dict)
+
+
+@dataclass
 class MeteringConfig:
     customer_id: str = DEFAULT_CUSTOMER_ID
     feature: str = DEFAULT_FEATURE
     providers: dict[str, ProviderCredentials] = field(default_factory=dict)
+    enforcement: Optional[EnforcementConfig] = None
     config_path: Optional[Path] = None
 
 
@@ -70,6 +84,32 @@ def _parse_provider(raw: Any) -> Optional[ProviderCredentials]:
         project_id=project_id,
         location=location,
         credentials_json=credentials_json,
+    )
+
+
+def _parse_enforcement(raw: Any) -> Optional[EnforcementConfig]:
+    if not isinstance(raw, dict):
+        return None
+    enabled = bool(raw.get("enabled", False))
+    status_code = int(raw.get("status_code", 429))
+    if status_code not in (402, 429):
+        status_code = 429
+    allowances: dict[str, CustomerAllowance] = {}
+    for customer_id, cfg in (raw.get("allowances") or {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        max_spend = cfg.get("max_spend_usd")
+        if max_spend is None:
+            continue
+        period = str(cfg.get("period") or "calendar_month")
+        allowances[str(customer_id)] = CustomerAllowance(
+            max_spend_usd=float(max_spend),
+            period=period,
+        )
+    return EnforcementConfig(
+        enabled=enabled,
+        status_code=status_code,
+        allowances=allowances,
     )
 
 
@@ -117,6 +157,7 @@ def load_config(path: Optional[Path] = None) -> MeteringConfig:
         customer_id=env_customer or (str(customer) if customer else DEFAULT_CUSTOMER_ID),
         feature=env_feature or (str(feature) if feature else DEFAULT_FEATURE),
         providers=providers,
+        enforcement=_parse_enforcement(raw.get("enforcement")),
         config_path=config_path,
     )
 

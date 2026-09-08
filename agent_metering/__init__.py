@@ -21,6 +21,7 @@ from agent_metering.context import (
     user_context,
 )
 from agent_metering.core import Meter
+from agent_metering.enforcement import AllowanceDenial, AllowanceEnforcer, AllowanceOk
 from agent_metering.instrument import disable, enable, get_meter, is_enabled, maybe_auto_enable
 from agent_metering.storage import BaseStorage, SQLiteStorage, UsageRecord
 
@@ -29,6 +30,9 @@ __all__ = [
     "SQLiteStorage",
     "BaseStorage",
     "UsageRecord",
+    "AllowanceDenial",
+    "AllowanceEnforcer",
+    "AllowanceOk",
     "check_budgets",
     "slack_notifier",
     "app",

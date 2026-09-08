@@ -46,7 +46,41 @@ Optional per-user / feature headers (stripped before upstream):
 
 Defaults: env `AGENT_METERING_CUSTOMER_ID` / `AGENT_METERING_FEATURE`, else `default`.
 
-Spend → local SQLite `agent_metering.db`. Dashboard:
+For OpenAI-compatible streaming (`stream: true`), the proxy automatically adds
+`stream_options: {"include_usage": true}` when the client omitted it, so the final
+SSE chunk includes a real usage block. Anthropic streams already emit usage without
+this option. Exact token counts from the usage block are logged (not content estimates).
+
+Optional granularity headers (also stripped before upstream):
+
+- `X-Call-Id` or `X-Step` — tag a single step inside an agent loop (rolls up under `X-Feature`)
+- `X-Unit-Id` — business unit / artifact id for cost-per-unit reporting
+- `X-Correlation-Id` + optional `X-Attempt` — link retries; prior attempts become `retry_attempt`
+
+Spend is written to local SQLite (`agent_metering.db`) in **WAL mode** with batched
+flushes (every ~200ms or 50 records). A crash loses at most the current in-memory
+batch; committed data survives.
+
+### Per-customer allowances
+
+Hard stop when a customer exceeds a monthly spend cap (off by default). In
+`agent_metering.config.json`:
+
+```json
+"enforcement": {
+  "enabled": true,
+  "status_code": 429,
+  "allowances": {
+    "acme_corp": { "max_spend_usd": 50.0, "period": "calendar_month" }
+  }
+}
+```
+
+`status_code` may be `429` (default) or `402`. When exceeded, the proxy returns JSON
+`{"error":"allowance_exceeded", ...}` and does **not** call the upstream provider.
+Checks use an in-memory spend cache refreshed when usage is flushed to SQLite.
+
+Dashboard:
 
 ```bash
 python -m streamlit run examples/dashboard.py   # pip install "llm-agent-metering[dashboard]"
@@ -155,8 +189,8 @@ Maintainers publish to PyPI via GitHub Actions Trusted Publishing (no API token 
 
 ```bash
 # version in pyproject.toml must match the tag
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.4.0
+git push origin v0.4.0
 # then GitHub → Releases → Draft release from that tag → Publish
 ```
 

@@ -2,6 +2,7 @@
 
 from agent_metering.providers.extractors import (
     extract_usage,
+    merge_stream_usage,
     parse_stream_event,
     usage_from_stream_dict,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "extract_usage",
     "get_provider",
     "get_registry",
+    "merge_stream_usage",
     "parse_stream_event",
     "reset_registry",
     "usage_from_stream_dict",

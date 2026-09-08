@@ -19,5 +19,15 @@
       "location": "us-central1",
       "credentials_json": "./service-account.json"
     }
+  },
+  "enforcement": {
+    "enabled": false,
+    "status_code": 429,
+    "allowances": {
+      "acme_corp": {
+        "max_spend_usd": 50.0,
+        "period": "calendar_month"
+      }
+    }
   }
 }

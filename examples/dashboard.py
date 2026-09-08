@@ -24,10 +24,12 @@ st.title("Agent Cost Metering")
 st.caption("Live spend from the local SQLite usage log.")
 
 db_path = st.sidebar.text_input("SQLite DB path", value="agent_metering.db")
-meter = Meter(storage=SQLiteStorage(db_path=db_path))
+meter = Meter(storage=SQLiteStorage(db_path=db_path, sync_writes=True))
 
 by_customer = meter.cost_by_customer()
 by_feature = meter.cost_by_feature()
+by_unit = meter.cost_by_unit_id()
+waste = meter.waste_spend()
 
 col_left, col_right = st.columns(2)
 
@@ -66,8 +68,58 @@ with col_right:
         )
         st.bar_chart(df_f.set_index("feature")["total_cost_usd"])
         st.dataframe(df_f, use_container_width=True)
+
+        selected = st.selectbox(
+            "Drill down steps within feature",
+            options=["(none)"] + list(by_feature.keys()),
+        )
+        if selected != "(none)":
+            by_call = meter.cost_by_call(feature=selected)
+            if by_call:
+                df_steps = pd.DataFrame(
+                    [
+                        {
+                            "call_id": k,
+                            "total_cost_usd": v["total_cost_usd"],
+                            "total_tokens": v["total_tokens"],
+                            "call_count": v["call_count"],
+                        }
+                        for k, v in by_call.items()
+                    ]
+                )
+                st.dataframe(df_steps, use_container_width=True)
+            else:
+                st.caption("No X-Call-Id / X-Step tags for this feature.")
     else:
         st.info("No feature usage recorded yet.")
+
+st.divider()
+st.subheader("Cost per unit id")
+if by_unit:
+    df_u = pd.DataFrame(
+        [
+            {
+                "unit_id": k,
+                "total_cost_usd": v["total_cost_usd"],
+                "total_tokens": v["total_tokens"],
+                "call_count": v["call_count"],
+            }
+            for k, v in by_unit.items()
+        ]
+    )
+    st.dataframe(df_u, use_container_width=True)
+else:
+    st.caption("No X-Unit-Id tags recorded yet.")
+
+st.divider()
+st.subheader("Spend with no successful output")
+st.metric(
+    "Waste spend (error + retry_attempt)",
+    f"${waste.get('total_cost_usd', 0.0):.4f}",
+)
+st.caption(
+    f"{waste.get('call_count', 0)} calls · {waste.get('total_tokens', 0)} tokens"
+)
 
 st.divider()
 st.subheader("On-demand budget check")

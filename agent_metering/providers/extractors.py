@@ -93,15 +93,21 @@ def parse_stream_event(
             event = json.loads(data_str)
         except json.JSONDecodeError:
             return None, None, 0
+        message = event.get("message") or {}
         model = event.get("model")
+        if not model and isinstance(message, dict):
+            model = message.get("model")
         usage = event.get("usage")
+        if usage is None and isinstance(message, dict):
+            usage = message.get("usage")
         content = ""
         delta = event.get("delta") or {}
         if isinstance(delta, dict):
             content = delta.get("text") or delta.get("content") or ""
-        message = event.get("message") or {}
         if isinstance(message, dict):
-            content = content or message.get("content") or ""
+            msg_content = message.get("content") or ""
+            if isinstance(msg_content, str):
+                content = content or msg_content
         return model, usage, len(content)
 
     # openai_sse (default)
@@ -119,6 +125,36 @@ def parse_stream_event(
     delta = (event.get("choices") or [{}])[0].get("delta") or {}
     content = delta.get("content") or ""
     return model, usage, len(content)
+
+
+def merge_stream_usage(
+    existing: Optional[dict[str, Any]],
+    incoming: Optional[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Merge SSE usage chunks so later partial events do not wipe earlier fields.
+
+    Takes the max of each known token field so Anthropic ``message_start``
+    input tokens survive a later ``message_delta`` that only has output tokens.
+    """
+    if not incoming:
+        return existing
+    if not existing:
+        return dict(incoming)
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value is None:
+            continue
+        if key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+        ):
+            merged[key] = max(_as_int(merged.get(key)), _as_int(value))
+        else:
+            merged[key] = value
+    return merged
 
 
 def usage_from_stream_dict(
